@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>出海项目多策略日历甘特看板</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     tailwind.config = {
       theme: {
@@ -247,6 +248,14 @@
   <script>
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
     const STORAGE_KEY = 'roadmap-calendar-strategy-v1';
+    const SUPABASE_URL = 'https://sjmiwsxpmycxpfyzladb.supabase.co';
+    const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_aHPBkHXtt0lKVzPfrdm5lA_KUdVknov';
+    const SUPABASE_TABLE = 'roadmap_state';
+    const SUPABASE_ROW_ID = 'main';
+
+    let supabaseClient = null;
+    let cloudSaveTimer = null;
+    let isApplyingRemoteState = false;
 
     const typeMeta = {
       common: { label: '通用', badge: '通用', color: '#7c3aed', text: 'text-violet-700', bg: 'bg-violet-50', border: 'border-violet-200' },
@@ -325,10 +334,13 @@
 
     init();
 
-    function init() {
+    async function init() {
       loadState();
+      initSupabase();
+      await loadCloudState();
       bindEvents();
       render();
+      subscribeToCloudState();
     }
 
     function bindEvents() {
@@ -704,33 +716,122 @@
       return task.phase;
     }
 
+    function initSupabase() {
+      const configured = SUPABASE_URL.startsWith('https://') && SUPABASE_PUBLISHABLE_KEY.startsWith('sb_publishable_');
+      if (!configured || !window.supabase) return;
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+    }
+
+    async function loadCloudState() {
+      if (!supabaseClient) return;
+
+      const { data, error } = await supabaseClient
+        .from(SUPABASE_TABLE)
+        .select('*')
+        .eq('id', SUPABASE_ROW_ID)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('Supabase load failed:', error.message);
+        return;
+      }
+
+      if (data) applyCloudRow(data);
+    }
+
+    function subscribeToCloudState() {
+      if (!supabaseClient) return;
+
+      supabaseClient
+        .channel('roadmap-state-main')
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: SUPABASE_TABLE,
+            filter: `id=eq.${SUPABASE_ROW_ID}`
+          },
+          payload => {
+            if (payload.new) applyCloudRow(payload.new);
+          }
+        )
+        .subscribe();
+    }
+
+    function applyCloudRow(row) {
+      isApplyingRemoteState = true;
+      applyPersistedState({
+        strategy: row.strategy,
+        dayOne: row.day_one,
+        phaseFilter: row.phase_filter,
+        progress: row.progress || {}
+      });
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(getLocalStateSnapshot()));
+      isApplyingRemoteState = false;
+      render();
+    }
+
+    function queueCloudSave() {
+      if (!supabaseClient || isApplyingRemoteState) return;
+      clearTimeout(cloudSaveTimer);
+      cloudSaveTimer = setTimeout(saveCloudState, 350);
+    }
+
+    async function saveCloudState() {
+      if (!supabaseClient) return;
+
+      const { error } = await supabaseClient
+        .from(SUPABASE_TABLE)
+        .update({
+          day_one: state.dayOne,
+          strategy: state.strategy,
+          phase_filter: state.phaseFilter,
+          progress: state.progress,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', SUPABASE_ROW_ID);
+
+      if (error) console.warn('Supabase save failed:', error.message);
+    }
+
+    function getLocalStateSnapshot() {
+      return {
+        strategy: state.strategy,
+        dayOne: state.dayOne,
+        viewDate: toDateKey(state.viewDate),
+        phaseFilter: state.phaseFilter,
+        progress: state.progress
+      };
+    }
+
+    function applyPersistedState(saved) {
+      if (!saved) return;
+      if (saved.strategy && strategyMeta[saved.strategy]) state.strategy = saved.strategy;
+      if (saved.dayOne) state.dayOne = saved.dayOne;
+      if (saved.viewDate) state.viewDate = startOfMonth(parseDateKey(saved.viewDate));
+      if (saved.phaseFilter) state.phaseFilter = saved.phaseFilter;
+      if (saved.typeFilter) state.phaseFilter = saved.typeFilter;
+      if (saved.progress) {
+        state.progress = { ...state.progress, ...saved.progress };
+        tasks.forEach(task => {
+          state.progress[task.id] = normalizeProgress(state.progress[task.id]);
+        });
+      }
+    }
+
     function loadState() {
       try {
         const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-        if (saved.strategy && strategyMeta[saved.strategy]) state.strategy = saved.strategy;
-        if (saved.dayOne) state.dayOne = saved.dayOne;
-        if (saved.viewDate) state.viewDate = startOfMonth(parseDateKey(saved.viewDate));
-        if (saved.phaseFilter) state.phaseFilter = saved.phaseFilter;
-        if (saved.typeFilter) state.phaseFilter = saved.typeFilter;
-        if (saved.progress) {
-          state.progress = { ...state.progress, ...saved.progress };
-          tasks.forEach(task => {
-            state.progress[task.id] = normalizeProgress(state.progress[task.id]);
-          });
-        }
+        applyPersistedState(saved);
       } catch {
         localStorage.removeItem(STORAGE_KEY);
       }
     }
 
     function saveState() {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        strategy: state.strategy,
-        dayOne: state.dayOne,
-        viewDate: toDateKey(state.viewDate),
-        phaseFilter: state.phaseFilter,
-        progress: state.progress
-      }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(getLocalStateSnapshot()));
+      queueCloudSave();
     }
 
     function normalizeProgress(value) {
