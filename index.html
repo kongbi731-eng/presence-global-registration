@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>出海项目多策略日历甘特看板</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif']
+          },
+          boxShadow: {
+            panel: '0 18px 60px rgba(15, 23, 42, 0.08)'
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(124, 58, 237, 0.09), transparent 32rem),
+        radial-gradient(circle at top right, rgba(14, 165, 233, 0.10), transparent 28rem),
+        linear-gradient(135deg, #f8fafc 0%, #f4f4f5 48%, #f8fafc 100%);
+    }
+    button, input, select { font: inherit; }
+    .calendar-scroll, .sidebar-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: #cbd5e1 transparent;
+    }
+    .calendar-scroll::-webkit-scrollbar, .sidebar-scroll::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    .calendar-scroll::-webkit-scrollbar-thumb, .sidebar-scroll::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 999px;
+      border: 3px solid transparent;
+      background-clip: padding-box;
+    }
+    .weekday-grid, .week-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      min-width: 1040px;
+    }
+    .week-grid {
+      grid-template-rows: 42px repeat(var(--lanes), 31px);
+      min-height: calc(42px + (var(--lanes) * 31px));
+    }
+    .date-cell {
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-start;
+      min-height: 100%;
+    }
+    .calendar-bar {
+      --task-color: #7c3aed;
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--task-color) 8%, white), #ffffff 72%);
+      border-color: color-mix(in srgb, var(--task-color) 58%, white);
+      border-left-color: var(--task-color);
+      box-shadow: 0 1px 0 rgba(15, 23, 42, 0.06), 0 6px 14px rgba(15, 23, 42, 0.06);
+    }
+    .calendar-bar::after {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: var(--progress);
+      max-width: 100%;
+      background: color-mix(in srgb, var(--task-color) 14%, transparent);
+      pointer-events: none;
+    }
+    .calendar-bar[data-status="todo"] {
+      background: linear-gradient(180deg, color-mix(in srgb, var(--task-color) 5%, white), #ffffff 74%);
+      border-color: color-mix(in srgb, var(--task-color) 44%, white);
+      border-left-color: var(--task-color);
+      color: #64748b;
+    }
+    .calendar-bar[data-status="todo"]::after { width: 0; }
+    .calendar-bar[data-status="done"] {
+      background: #f0fdf4;
+      border-color: #22c55e;
+      border-left-color: #16a34a;
+    }
+    .calendar-bar[data-status="done"]::after {
+      background: rgba(34, 197, 94, 0.12);
+      width: 100%;
+    }
+    .strategy-tab[aria-pressed="true"] {
+      background: #0f172a;
+      border-color: #0f172a;
+      color: #ffffff;
+    }
+    @media (max-width: 767px) {
+      .weekday-grid, .week-grid { min-width: 960px; }
+    }
+  </style>
+</head>
+<body class="text-slate-900 antialiased">
+  <main class="min-h-screen p-4 md:p-6 xl:p-8">
+    <section class="mx-auto flex max-w-[1840px] flex-col gap-4">
+      <header class="flex flex-col gap-4 rounded-lg border border-white/70 bg-white/84 p-4 shadow-panel backdrop-blur">
+        <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white">Strategy Roadmap</span>
+              <span id="dayOneBadge" class="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600">点击日期设置 Day 1</span>
+            </div>
+            <h1 class="mt-3 text-2xl font-semibold tracking-normal text-slate-950 md:text-3xl">出海项目多策略落地日历甘特看板</h1>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:min-w-[600px]">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <div class="text-xs text-slate-500">总任务数</div>
+              <div id="metricTasks" class="mt-1 text-xl font-semibold">-</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <div class="text-xs text-slate-500">整体完成</div>
+              <div id="metricProgress" class="mt-1 text-xl font-semibold">0%</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <div class="text-xs text-slate-500">预计完工</div>
+              <div id="metricFinish" class="mt-1 truncate text-xl font-semibold">-</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <div class="text-xs text-slate-500">项目总周期</div>
+              <div id="metricSpan" class="mt-1 text-xl font-semibold">-</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-3">
+          <div class="mb-3 text-sm font-semibold text-slate-700">当前项目发布策略</div>
+          <div id="strategyTabs" class="grid gap-2 md:grid-cols-3">
+            <button type="button" data-strategy="dual" class="strategy-tab h-11 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50" aria-pressed="true">双端齐发</button>
+            <button type="button" data-strategy="gp" class="strategy-tab h-11 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50" aria-pressed="false">仅搞 Google Play</button>
+            <button type="button" data-strategy="ios" class="strategy-tab h-11 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50" aria-pressed="false">仅搞 App Store</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_430px]">
+        <div class="overflow-hidden rounded-lg border border-white/70 bg-white/88 shadow-panel backdrop-blur">
+          <div class="flex flex-col gap-3 border-b border-slate-200 p-4 lg:flex-row lg:items-center lg:justify-between">
+            <div class="flex flex-wrap items-center gap-2">
+              <button id="prevMonth" class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 transition hover:border-slate-300 hover:bg-slate-50" aria-label="上个月">
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+              </button>
+              <button id="nextMonth" class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 transition hover:border-slate-300 hover:bg-slate-50" aria-label="下个月">
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <button id="todayBtn" class="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">今天</button>
+              <label class="flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700">
+                Day 1
+                <input id="dayOneInput" type="date" class="bg-transparent text-sm outline-none" />
+              </label>
+              <button id="clearBtn" class="h-10 rounded-md border border-rose-200 bg-rose-50 px-3 text-sm font-medium text-rose-700 transition hover:border-rose-300 hover:bg-rose-100">清空</button>
+            </div>
+            <h2 id="monthTitle" class="text-xl font-semibold text-slate-950"></h2>
+            <div class="flex flex-wrap gap-2 text-xs font-medium">
+              <span class="inline-flex items-center gap-1 rounded-md bg-violet-50 px-2 py-1 text-violet-700"><i class="h-2 w-2 rounded-full bg-violet-500"></i>基础筹备</span>
+              <span class="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-blue-700"><i class="h-2 w-2 rounded-full bg-blue-500"></i>公司登记</span>
+              <span class="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-1 text-amber-700"><i class="h-2 w-2 rounded-full bg-amber-500"></i>网络硬件</span>
+              <span class="inline-flex items-center gap-1 rounded-md bg-cyan-50 px-2 py-1 text-cyan-700"><i class="h-2 w-2 rounded-full bg-cyan-500"></i>环境账号</span>
+              <span class="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-emerald-700"><i class="h-2 w-2 rounded-full bg-emerald-500"></i>发布上架</span>
+            </div>
+          </div>
+
+          <div class="calendar-scroll overflow-x-auto">
+            <div class="weekday-grid border-b border-slate-200 bg-slate-100 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <div class="border-r border-slate-200 py-3">周日</div>
+              <div class="border-r border-slate-200 py-3">周一</div>
+              <div class="border-r border-slate-200 py-3">周二</div>
+              <div class="border-r border-slate-200 py-3">周三</div>
+              <div class="border-r border-slate-200 py-3">周四</div>
+              <div class="border-r border-slate-200 py-3">周五</div>
+              <div class="py-3">周六</div>
+            </div>
+            <div id="calendarWeeks" class="bg-white"></div>
+          </div>
+        </div>
+
+        <aside class="rounded-lg border border-white/70 bg-white/90 shadow-panel backdrop-blur">
+          <div class="border-b border-slate-200 p-4">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <h2 class="text-lg font-semibold text-slate-950">Task List</h2>
+                <p id="sidebarHint" class="mt-1 text-sm text-slate-500">随发布策略自动过滤</p>
+              </div>
+              <select id="phaseFilter" class="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100">
+                <option value="all">全部阶段</option>
+                <option value="基础筹备">基础筹备</option>
+                <option value="公司登记">公司登记</option>
+                <option value="网络硬件">网络硬件</option>
+                <option value="环境账号">环境账号</option>
+                <option value="发布上架">发布上架</option>
+              </select>
+            </div>
+            <div class="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+              <div id="overallBar" class="h-full rounded-full bg-sky-500 transition-all" style="width: 0%"></div>
+            </div>
+          </div>
+          <div id="taskList" class="sidebar-scroll max-h-[calc(100vh-280px)] overflow-y-auto p-3"></div>
+        </aside>
+      </section>
+    </section>
+  </main>
+
+  <div id="editorOverlay" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm">
+    <section class="w-full max-w-md rounded-lg border border-white/80 bg-white p-5 shadow-2xl">
+      <div class="flex items-start justify-between gap-4">
+        <div class="min-w-0">
+          <p id="editorType" class="text-xs font-semibold uppercase tracking-wide text-slate-500"></p>
+          <h3 id="editorTitle" class="mt-1 text-lg font-semibold text-slate-950"></h3>
+          <p id="editorDates" class="mt-1 text-sm text-slate-500"></p>
+        </div>
+        <button id="closeEditor" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50" aria-label="关闭">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
+        <div class="mb-3 flex items-center justify-between">
+          <label for="progressRange" class="text-sm font-medium text-slate-700">完成度</label>
+          <input id="progressNumber" type="number" min="0" max="100" step="1" class="h-10 w-24 rounded-md border border-slate-200 bg-white px-3 text-right text-sm font-semibold outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100" />
+        </div>
+        <input id="progressRange" type="range" min="0" max="100" step="1" class="w-full accent-sky-500" />
+        <div class="mt-3 flex justify-between text-xs text-slate-500">
+          <span>0%</span>
+          <span>50%</span>
+          <span>100%</span>
+        </div>
+      </div>
+      <div class="mt-4 grid grid-cols-3 gap-2">
+        <button data-quick-progress="0" class="quick-progress h-10 rounded-md border border-slate-200 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50">未开始</button>
+        <button data-quick-progress="50" class="quick-progress h-10 rounded-md border border-sky-200 bg-sky-50 text-sm font-medium text-sky-700 hover:bg-sky-100">进行中</button>
+        <button data-quick-progress="100" class="quick-progress h-10 rounded-md border border-emerald-200 bg-emerald-50 text-sm font-medium text-emerald-700 hover:bg-emerald-100">完成</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+    const STORAGE_KEY = 'roadmap-calendar-strategy-v1';
+
+    const typeMeta = {
+      common: { label: '通用', badge: '通用', color: '#7c3aed', text: 'text-violet-700', bg: 'bg-violet-50', border: 'border-violet-200' },
+      gp: { label: 'Google Play', badge: 'GP', color: '#2563eb', text: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-200' },
+      ios: { label: 'App Store', badge: 'iOS', color: '#111827', text: 'text-slate-800', bg: 'bg-slate-100', border: 'border-slate-300' }
+    };
+
+    const phaseMeta = {
+      '基础筹备': { label: '基础筹备', color: '#7c3aed', text: 'text-violet-700', bg: 'bg-violet-50', border: 'border-violet-200' },
+      '公司登记': { label: '公司登记', color: '#2563eb', text: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-200' },
+      '网络硬件': { label: '网络硬件', color: '#d97706', text: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200' },
+      '环境账号': { label: '环境账号', color: '#0891b2', text: 'text-cyan-700', bg: 'bg-cyan-50', border: 'border-cyan-200' },
+      '发布上架': { label: '发布上架', color: '#059669', text: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200' }
+    };
+
+    const strategyMeta = {
+      dual: '双端齐发',
+      gp: '仅搞 Google Play',
+      ios: '仅搞 App Store'
+    };
+
+    const tasks = [
+      { id: '101', phase: '基础筹备', name: '董事股东证件', duration: 1, type: 'common', deps: [] },
+      { id: '102', phase: '基础筹备', name: '核名及确认注册资本', duration: 1, type: 'common', deps: [] },
+      { id: '103', phase: '基础筹备', name: '准备境外手机号', duration: 5, type: 'common', deps: [] },
+      { id: '104', phase: '基础筹备', name: '准备境外信用卡/借记卡', duration: 5, type: 'common', deps: [] },
+      { id: '105', phase: '基础筹备', name: '实名域名购买', duration: 1, type: 'common', deps: [] },
+      { id: '201', phase: '公司登记', name: '提交材料与代理注册公司', duration: 8, type: 'common', deps: ['101', '102'] },
+      { id: '202', phase: '公司登记', name: '租赁办公室', duration: 2, type: 'common', deps: ['101', '102'] },
+      { id: '203', phase: '公司登记', name: '银行开户', duration: 15, type: 'common', deps: ['201'] },
+      { id: '204', phase: '公司登记', name: '申请 Duns 邓白氏编码', duration: 5, type: 'common', deps: ['201'] },
+      { id: '301', phase: '网络硬件', name: '采购网络硬件设备', duration: 4, type: 'common', deps: ['202'] },
+      { id: '302', phase: '网络硬件', name: '配置 Todesk 干净远程环境', duration: 2, type: 'common', deps: ['301'] },
+      { id: '401', phase: '环境账号', name: '配置企业邮件组', duration: 1, type: 'common', deps: ['105'] },
+      { id: '402', phase: '环境账号', name: '配置品牌官网', duration: 2, type: 'common', deps: ['401'] },
+      { id: '403', phase: 'Google Play', name: 'Google Play 养号环境', duration: 10, type: 'gp', deps: ['103', '302'] },
+      { id: '501', phase: 'Google Play', name: '注册 GP 开发者账号', duration: 2, type: 'gp', deps: ['104', '204', '402', '403'] },
+      { id: '601', phase: 'Google Play', name: '上架 GP 白色包审核', duration: 5, type: 'gp', deps: ['501'] },
+      { id: '602', phase: 'Google Play', name: '上架 GP 正式包', duration: 1, type: 'gp', deps: ['203', '601'] },
+      { id: '404', phase: 'App Store', name: 'iOS 养号与真机环境绑定', duration: 7, type: 'ios', deps: ['103', '302'] },
+      { id: '502', phase: 'App Store', name: '注册 Apple 开发者账号', duration: 3, type: 'ios', deps: ['104', '204', '402', '404'] },
+      { id: '603', phase: 'App Store', name: '提交 iOS TestFlight 提审', duration: 3, type: 'ios', deps: ['502'] },
+      { id: '604', phase: 'App Store', name: '上架 App Store 正式包', duration: 2, type: 'ios', deps: ['203', '603'] }
+    ];
+
+    const state = {
+      strategy: 'dual',
+      viewDate: startOfMonth(new Date()),
+      dayOne: null,
+      progress: Object.fromEntries(tasks.map(task => [task.id, 0])),
+      activeTaskId: null,
+      phaseFilter: 'all'
+    };
+
+    const els = {
+      strategyTabs: document.getElementById('strategyTabs'),
+      calendarWeeks: document.getElementById('calendarWeeks'),
+      monthTitle: document.getElementById('monthTitle'),
+      dayOneInput: document.getElementById('dayOneInput'),
+      dayOneBadge: document.getElementById('dayOneBadge'),
+      metricTasks: document.getElementById('metricTasks'),
+      metricProgress: document.getElementById('metricProgress'),
+      metricFinish: document.getElementById('metricFinish'),
+      metricSpan: document.getElementById('metricSpan'),
+      taskList: document.getElementById('taskList'),
+      sidebarHint: document.getElementById('sidebarHint'),
+      phaseFilter: document.getElementById('phaseFilter'),
+      overallBar: document.getElementById('overallBar'),
+      editorOverlay: document.getElementById('editorOverlay'),
+      editorType: document.getElementById('editorType'),
+      editorTitle: document.getElementById('editorTitle'),
+      editorDates: document.getElementById('editorDates'),
+      progressNumber: document.getElementById('progressNumber'),
+      progressRange: document.getElementById('progressRange')
+    };
+
+    init();
+
+    function init() {
+      loadState();
+      bindEvents();
+      render();
+    }
+
+    function bindEvents() {
+      els.strategyTabs.querySelectorAll('[data-strategy]').forEach(button => {
+        button.addEventListener('click', () => {
+          state.strategy = button.dataset.strategy;
+          saveState();
+          render();
+        });
+      });
+
+      document.getElementById('prevMonth').addEventListener('click', () => {
+        state.viewDate = addMonths(state.viewDate, -1);
+        render();
+      });
+
+      document.getElementById('nextMonth').addEventListener('click', () => {
+        state.viewDate = addMonths(state.viewDate, 1);
+        render();
+      });
+
+      document.getElementById('todayBtn').addEventListener('click', () => {
+        state.viewDate = startOfMonth(new Date());
+        render();
+      });
+
+      els.dayOneInput.addEventListener('change', event => {
+        if (!event.target.value) return;
+        setDayOne(event.target.value);
+      });
+
+      document.getElementById('clearBtn').addEventListener('click', () => {
+        state.dayOne = null;
+        state.progress = Object.fromEntries(tasks.map(task => [task.id, 0]));
+        saveState();
+        render();
+      });
+
+      els.phaseFilter.addEventListener('change', event => {
+        state.phaseFilter = event.target.value;
+        saveState();
+        renderTaskList(getSchedule());
+      });
+
+      document.getElementById('closeEditor').addEventListener('click', closeEditor);
+      els.editorOverlay.addEventListener('click', event => {
+        if (event.target === els.editorOverlay) closeEditor();
+      });
+
+      els.progressRange.addEventListener('input', event => setProgressForActive(event.target.value));
+      els.progressNumber.addEventListener('input', event => setProgressForActive(event.target.value));
+
+      document.querySelectorAll('.quick-progress').forEach(button => {
+        button.addEventListener('click', () => setProgressForActive(button.dataset.quickProgress));
+      });
+
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') closeEditor();
+      });
+    }
+
+    function getActiveTasks() {
+      return tasks.filter(task => {
+        if (task.type === 'common') return true;
+        if (state.strategy === 'dual') return true;
+        return task.type === state.strategy;
+      });
+    }
+
+    function getSchedule() {
+      const activeTasks = getActiveTasks();
+      if (!state.dayOne) {
+        return activeTasks.map(task => ({ ...task, progress: state.progress[task.id] ?? 0 }));
+      }
+
+      const byId = new Map(activeTasks.map(task => [task.id, { ...task }]));
+      const scheduled = new Map();
+      const visiting = new Set();
+
+      function scheduleTask(taskId) {
+        if (scheduled.has(taskId)) return scheduled.get(taskId);
+        if (visiting.has(taskId)) throw new Error('任务依赖存在循环');
+
+        const task = byId.get(taskId);
+        if (!task) return null;
+
+        visiting.add(taskId);
+        const depSchedules = task.deps.map(scheduleTask).filter(Boolean);
+        const start = depSchedules.length
+          ? addDays(new Date(Math.max(...depSchedules.map(item => item.end.getTime()))), 1)
+          : parseDateKey(state.dayOne);
+        const end = addDays(start, task.duration - 1);
+        const item = { ...task, start, end, progress: state.progress[task.id] ?? 0 };
+
+        visiting.delete(taskId);
+        scheduled.set(taskId, item);
+        return item;
+      }
+
+      activeTasks.forEach(task => scheduleTask(task.id));
+      return activeTasks.map(task => scheduled.get(task.id));
+    }
+
+    function render() {
+      const schedule = getSchedule();
+      renderStrategyTabs();
+      renderHeader(schedule);
+      renderCalendarGantt(schedule.filter(task => task.start));
+      renderTaskList(schedule);
+    }
+
+    function renderStrategyTabs() {
+      els.strategyTabs.querySelectorAll('[data-strategy]').forEach(button => {
+        button.setAttribute('aria-pressed', String(button.dataset.strategy === state.strategy));
+      });
+    }
+
+    function renderHeader(schedule) {
+      const activeTasks = getActiveTasks();
+      const avg = activeTasks.length
+        ? Math.round(activeTasks.reduce((sum, task) => sum + (state.progress[task.id] || 0), 0) / activeTasks.length)
+        : 0;
+
+      els.monthTitle.textContent = formatMonthTitle(state.viewDate);
+      els.metricTasks.textContent = String(activeTasks.length);
+      els.metricProgress.textContent = `${avg}%`;
+      els.overallBar.style.width = `${avg}%`;
+      els.dayOneBadge.textContent = state.dayOne
+        ? `${strategyMeta[state.strategy]}｜Day 1：${formatFullDate(parseDateKey(state.dayOne))}`
+        : `${strategyMeta[state.strategy]}｜点击日期设置 Day 1`;
+      els.dayOneInput.value = state.dayOne || '';
+
+      const scheduled = schedule.filter(task => task.start);
+      if (!scheduled.length) {
+        els.metricFinish.textContent = '-';
+        els.metricSpan.textContent = '-';
+        return;
+      }
+
+      const finish = new Date(Math.max(...scheduled.map(task => task.end.getTime())));
+      const start = parseDateKey(state.dayOne);
+      els.metricFinish.textContent = formatShortDate(finish);
+      els.metricSpan.textContent = `${diffDays(start, finish) + 1} 天`;
+    }
+
+    function renderCalendarGantt(schedule) {
+      const monthStart = startOfMonth(state.viewDate);
+      const gridStart = addDays(monthStart, -monthStart.getDay());
+      const weeks = Array.from({ length: 6 }, (_, weekIndex) => addDays(gridStart, weekIndex * 7));
+      const todayKey = toDateKey(new Date());
+      const dayOneKey = state.dayOne;
+
+      els.calendarWeeks.innerHTML = weeks.map(weekStart => {
+        const weekEnd = addDays(weekStart, 6);
+        const dates = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+        const segments = buildWeekSegments(schedule, weekStart, weekEnd);
+        const lastSegment = segments[segments.length - 1];
+        const lanes = Math.max(4, (lastSegment?.lane ?? -1) + 1);
+
+        return `
+          <section class="week-grid border-b border-slate-200" style="--lanes: ${lanes}">
+            ${dates.map((date, index) => {
+              const key = toDateKey(date);
+              const inMonth = date.getMonth() === state.viewDate.getMonth();
+              const isToday = key === todayKey;
+              const isDayOne = key === dayOneKey;
+              const border = index === 6 ? '' : 'border-r';
+              return `
+                <button type="button" data-date="${key}" class="date-cell relative ${border} border-slate-200 p-2 text-left transition hover:bg-sky-50/70 ${inMonth ? 'bg-white' : 'bg-slate-50/80'} ${isDayOne ? 'ring-2 ring-inset ring-sky-400' : ''}" style="grid-column: ${index + 1}; grid-row: 1 / span ${lanes + 1};">
+                  <span class="relative z-[2] inline-flex h-7 min-w-7 items-center justify-center rounded-md px-1.5 text-sm font-semibold ${isToday ? 'bg-slate-900 text-white' : inMonth ? 'text-slate-700' : 'text-slate-400'}">${date.getDate()}</span>
+                  ${isDayOne ? '<span class="relative z-[2] ml-1 rounded-md bg-sky-100 px-1.5 py-0.5 text-[11px] font-semibold text-sky-700">Day 1</span>' : ''}
+                </button>
+              `;
+            }).join('')}
+            ${segments.map(segment => calendarBar(segment)).join('')}
+          </section>
+        `;
+      }).join('');
+
+      els.calendarWeeks.querySelectorAll('[data-date]').forEach(cell => {
+        cell.addEventListener('click', () => setDayOne(cell.dataset.date));
+      });
+
+      els.calendarWeeks.querySelectorAll('[data-task-id]').forEach(bar => {
+        bar.addEventListener('click', event => {
+          event.stopPropagation();
+          openEditor(bar.dataset.taskId);
+        });
+      });
+    }
+
+    function buildWeekSegments(schedule, weekStart, weekEnd) {
+      const raw = schedule
+        .filter(task => task.end >= weekStart && task.start <= weekEnd)
+        .map(task => {
+          const segmentStart = task.start > weekStart ? task.start : weekStart;
+          const segmentEnd = task.end < weekEnd ? task.end : weekEnd;
+          return {
+            task,
+            startCol: segmentStart.getDay() + 1,
+            endCol: segmentEnd.getDay() + 1,
+            startDate: segmentStart,
+            endDate: segmentEnd
+          };
+        })
+        .sort((a, b) => a.startCol - b.startCol || b.endCol - a.endCol || tasks.findIndex(task => task.id === a.task.id) - tasks.findIndex(task => task.id === b.task.id));
+
+      const laneEnds = [];
+      return raw.map(segment => {
+        let lane = laneEnds.findIndex(endCol => segment.startCol > endCol);
+        if (lane === -1) {
+          lane = laneEnds.length;
+          laneEnds.push(0);
+        }
+        laneEnds[lane] = segment.endCol;
+        return { ...segment, lane };
+      });
+    }
+
+    function calendarBar(segment) {
+      const { task, startCol, endCol, lane } = segment;
+      const meta = phaseMeta[getVisualPhase(task)];
+      const platform = typeMeta[task.type];
+      const status = getStatus(task.progress);
+      const isStart = toDateKey(segment.startDate) === toDateKey(task.start);
+      const isEnd = toDateKey(segment.endDate) === toDateKey(task.end);
+      const rounded = `${isStart ? 'rounded-l-md' : 'rounded-l-none'} ${isEnd ? 'rounded-r-md' : 'rounded-r-none'}`;
+      const continuation = `${isStart ? '' : 'pl-2'} ${isEnd ? '' : 'pr-2'}`;
+      const label = escapeHtml(task.name);
+
+      return `
+        <button
+          type="button"
+          data-task-id="${task.id}"
+          data-status="${status}"
+          class="calendar-bar relative z-10 mx-1 mt-0.5 flex h-7 min-w-0 items-center overflow-hidden border border-l-4 px-2 text-left text-xs font-semibold leading-none text-slate-800 transition hover:-translate-y-0.5 ${rounded} ${continuation}"
+          style="--task-color: ${meta.color}; --progress: ${task.progress}%; grid-column: ${startCol} / ${endCol + 1}; grid-row: ${lane + 2};"
+          title="[${platform.badge}] ${escapeHtml(task.name)}｜${formatFullDate(task.start)} - ${formatFullDate(task.end)}｜${task.progress}%"
+        >
+          <span class="relative z-[1] mr-1.5 h-2 w-2 shrink-0 rounded-full" style="background: ${meta.color}"></span>
+          <span class="relative z-[1] mr-1.5 rounded bg-white/85 px-1 text-[10px] font-bold" style="color: ${platform.color}">${platform.badge}</span>
+          <span class="relative z-[1] min-w-0 truncate">${label}</span>
+          <span class="relative z-[1] ml-auto shrink-0 pl-2 text-[11px] text-slate-500">${task.progress}%${status === 'done' ? '<span class="ml-1 text-emerald-600">✓</span>' : ''}</span>
+        </button>
+      `;
+    }
+
+    function setDayOne(dateKey) {
+      state.dayOne = dateKey;
+      state.viewDate = startOfMonth(parseDateKey(dateKey));
+      saveState();
+      render();
+    }
+
+    function renderTaskList(schedule) {
+      const allowedFilters = new Set(['all', ...new Set(getActiveTasks().map(getVisualPhase))]);
+      if (!allowedFilters.has(state.phaseFilter)) state.phaseFilter = 'all';
+
+      Array.from(els.phaseFilter.options).forEach(option => {
+        option.disabled = !allowedFilters.has(option.value);
+      });
+
+      const filtered = schedule.filter(task => state.phaseFilter === 'all' || getVisualPhase(task) === state.phaseFilter);
+      els.phaseFilter.value = state.phaseFilter;
+      els.sidebarHint.textContent = `${strategyMeta[state.strategy]}：${schedule.length} 个有效任务`;
+
+      els.taskList.innerHTML = filtered.map(task => {
+        const visualPhase = getVisualPhase(task);
+        const meta = phaseMeta[visualPhase];
+        const platform = typeMeta[task.type];
+        const status = getStatus(task.progress);
+        const depsText = task.deps.length
+          ? task.deps.map(depId => tasks.find(item => item.id === depId)?.name).filter(Boolean).join('、')
+          : '无';
+
+        return `
+          <article class="mb-3 rounded-lg border ${meta.border} bg-white p-3 transition hover:shadow-md">
+            <button type="button" data-list-task="${task.id}" class="block w-full text-left">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="rounded-md ${meta.bg} px-2 py-0.5 text-xs font-semibold ${meta.text}">${visualPhase}</span>
+                    <span class="rounded-md ${platform.bg} px-2 py-0.5 text-xs font-semibold ${platform.text}">${platform.badge}</span>
+                    <span class="text-xs text-slate-500">${task.duration} 天</span>
+                  </div>
+                  <h3 class="mt-2 text-sm font-semibold leading-snug text-slate-950">${escapeHtml(task.name)}</h3>
+                </div>
+                <span class="shrink-0 rounded-md ${status === 'done' ? 'bg-emerald-100 text-emerald-700' : status === 'todo' ? 'bg-slate-100 text-slate-500' : 'bg-sky-100 text-sky-700'} px-2 py-1 text-xs font-semibold">${task.progress}%</span>
+              </div>
+              <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <div class="rounded-md bg-slate-50 px-2 py-1.5">
+                  <span class="block text-slate-400">开始</span>
+                  <strong class="font-semibold text-slate-700">${task.start ? formatShortDate(task.start) : '-'}</strong>
+                </div>
+                <div class="rounded-md bg-slate-50 px-2 py-1.5">
+                  <span class="block text-slate-400">结束</span>
+                  <strong class="font-semibold text-slate-700">${task.end ? formatShortDate(task.end) : '-'}</strong>
+                </div>
+              </div>
+              <p class="mt-2 line-clamp-2 text-xs text-slate-500">依赖：${escapeHtml(depsText)}</p>
+            </button>
+            <div class="mt-3 flex items-center gap-3">
+              <input data-inline-progress="${task.id}" type="range" min="0" max="100" value="${task.progress}" class="min-w-0 flex-1 accent-sky-500" />
+              <input data-inline-number="${task.id}" type="number" min="0" max="100" value="${task.progress}" class="h-8 w-16 rounded-md border border-slate-200 px-2 text-right text-xs font-semibold outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
+            </div>
+          </article>
+        `;
+      }).join('');
+
+      els.taskList.querySelectorAll('[data-list-task]').forEach(button => {
+        button.addEventListener('click', () => openEditor(button.dataset.listTask));
+      });
+
+      els.taskList.querySelectorAll('[data-inline-progress], [data-inline-number]').forEach(input => {
+        input.addEventListener('change', event => {
+          updateProgress(event.target.dataset.inlineProgress || event.target.dataset.inlineNumber, event.target.value);
+        });
+      });
+    }
+
+    function openEditor(taskId) {
+      const task = getSchedule().find(item => item.id === taskId) || tasks.find(item => item.id === taskId);
+      if (!task) return;
+
+      const visualPhase = getVisualPhase(task);
+      const meta = phaseMeta[visualPhase];
+      const platform = typeMeta[task.type];
+      state.activeTaskId = taskId;
+      els.editorType.textContent = `${visualPhase}｜${platform.label}`;
+      els.editorType.className = `text-xs font-semibold uppercase tracking-wide ${meta.text}`;
+      els.editorTitle.textContent = task.name;
+      els.editorDates.textContent = task.start ? `${formatFullDate(task.start)} - ${formatFullDate(task.end)}｜${task.duration} 天` : '设置 Day 1 后显示起止日期';
+      els.progressNumber.value = state.progress[taskId] || 0;
+      els.progressRange.value = state.progress[taskId] || 0;
+      els.editorOverlay.classList.remove('hidden');
+      els.editorOverlay.classList.add('flex');
+    }
+
+    function closeEditor() {
+      state.activeTaskId = null;
+      els.editorOverlay.classList.add('hidden');
+      els.editorOverlay.classList.remove('flex');
+    }
+
+    function setProgressForActive(value) {
+      if (!state.activeTaskId) return;
+      updateProgress(state.activeTaskId, value);
+      const normalized = normalizeProgress(value);
+      els.progressNumber.value = normalized;
+      els.progressRange.value = normalized;
+    }
+
+    function updateProgress(taskId, value) {
+      state.progress[taskId] = normalizeProgress(value);
+      saveState();
+      render();
+      if (state.activeTaskId) {
+        els.progressNumber.value = state.progress[state.activeTaskId] || 0;
+        els.progressRange.value = state.progress[state.activeTaskId] || 0;
+      }
+    }
+
+    function getStatus(progress) {
+      if (progress >= 100) return 'done';
+      if (progress <= 0) return 'todo';
+      return 'doing';
+    }
+
+    function getVisualPhase(task) {
+      const id = Number(task.id);
+      if (id >= 501) return '发布上架';
+      if (id === 403 || id === 404) return '环境账号';
+      return task.phase;
+    }
+
+    function loadState() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+        if (saved.strategy && strategyMeta[saved.strategy]) state.strategy = saved.strategy;
+        if (saved.dayOne) state.dayOne = saved.dayOne;
+        if (saved.viewDate) state.viewDate = startOfMonth(parseDateKey(saved.viewDate));
+        if (saved.phaseFilter) state.phaseFilter = saved.phaseFilter;
+        if (saved.typeFilter) state.phaseFilter = saved.typeFilter;
+        if (saved.progress) {
+          state.progress = { ...state.progress, ...saved.progress };
+          tasks.forEach(task => {
+            state.progress[task.id] = normalizeProgress(state.progress[task.id]);
+          });
+        }
+      } catch {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    }
+
+    function saveState() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        strategy: state.strategy,
+        dayOne: state.dayOne,
+        viewDate: toDateKey(state.viewDate),
+        phaseFilter: state.phaseFilter,
+        progress: state.progress
+      }));
+    }
+
+    function normalizeProgress(value) {
+      const number = Number(value);
+      if (Number.isNaN(number)) return 0;
+      return Math.min(100, Math.max(0, Math.round(number)));
+    }
+
+    function startOfMonth(date) {
+      return new Date(date.getFullYear(), date.getMonth(), 1);
+    }
+
+    function stripTime(date) {
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    }
+
+    function addDays(date, days) {
+      const next = new Date(date);
+      next.setDate(next.getDate() + days);
+      return stripTime(next);
+    }
+
+    function addMonths(date, months) {
+      return new Date(date.getFullYear(), date.getMonth() + months, 1);
+    }
+
+    function diffDays(start, end) {
+      return Math.round((stripTime(end) - stripTime(start)) / MS_PER_DAY);
+    }
+
+    function toDateKey(date) {
+      const clean = stripTime(date);
+      const year = clean.getFullYear();
+      const month = String(clean.getMonth() + 1).padStart(2, '0');
+      const day = String(clean.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    function parseDateKey(key) {
+      const [year, month, day] = key.split('-').map(Number);
+      return new Date(year, month - 1, day);
+    }
+
+    function formatMonthTitle(date) {
+      return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月`;
+    }
+
+    function formatShortDate(date) {
+      return `${date.getMonth() + 1}/${date.getDate()}`;
+    }
+
+    function formatFullDate(date) {
+      return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+  </script>
+</body>
+</html>
